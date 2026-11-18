@@ -51,6 +51,10 @@ namespace OpenRA.Graphics
 		// Viewport geometry (world-px)
 		public int2 CenterLocation { get; private set; }
 
+		// Sub-pixel part of scroll deltas that CenterLocation could not take yet. Without it, small per-frame
+		// steps (high frame rates, diagonal scrolling, zoom > 1) are truncated to zero and the view barely moves.
+		float2 scrollRemainder;
+
 		public WPos CenterPosition => worldRenderer.ProjectedPosition(CenterLocation);
 
 		public Rectangle Rectangle => new(TopLeft, new Size(viewportSize.X, viewportSize.Y));
@@ -332,13 +336,26 @@ namespace OpenRA.Graphics
 
 		public void Scroll(float2 delta, bool ignoreBorders)
 		{
-			// Convert scroll delta from world-px to viewport-px
-			CenterLocation += (1f / Zoom * delta).ToInt2();
+			// Convert scroll delta from world-px to viewport-px, carrying the fraction over to the next call
+			var exact = 1f / Zoom * delta + scrollRemainder;
+			var step = exact.ToInt2();
+			scrollRemainder = exact - step;
+			CenterLocation += step;
 			cellsDirty = true;
 			allCellsDirty = true;
 
 			if (!ignoreBorders)
-				CenterLocation = CenterLocation.Clamp(mapBounds);
+			{
+				var clamped = CenterLocation.Clamp(mapBounds);
+
+				// Don't keep pushing against a map edge
+				if (clamped.X != CenterLocation.X)
+					scrollRemainder = new float2(0, scrollRemainder.Y);
+				if (clamped.Y != CenterLocation.Y)
+					scrollRemainder = new float2(scrollRemainder.X, 0);
+
+				CenterLocation = clamped;
+			}
 		}
 
 		// Rectangle (in viewport coords) that contains things to be drawn
