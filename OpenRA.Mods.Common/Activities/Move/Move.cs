@@ -28,10 +28,11 @@ namespace OpenRA.Mods.Common.Activities
 		readonly Actor ignoreActor;
 		readonly Color? targetLineColor;
 
+		// The first path ignores other units (only immovable actors block it): a group sent through a narrow pass would
+		// otherwise see the pass taken by its own leading units and send the rest on a long detour. Units that meet a
+		// blocker on the way still wait and then re-path around it (PopPath).
 		static readonly BlockedByActor[] PathSearchOrder =
 		[
-			BlockedByActor.All,
-			BlockedByActor.Stationary,
 			BlockedByActor.Immovable,
 			BlockedByActor.None
 		];
@@ -130,7 +131,6 @@ namespace OpenRA.Mods.Common.Activities
 				destination = mobile.CanEnterCell(movableDestination, check: BlockedByActor.Immovable) ? movableDestination : null;
 			}
 
-			// TODO: Change this to BlockedByActor.Stationary after improving the local avoidance behaviour
 			foreach (var check in PathSearchOrder)
 			{
 				(alreadyAtDestination, path) = EvalPath(check);
