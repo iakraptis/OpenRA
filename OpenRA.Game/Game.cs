@@ -360,6 +360,15 @@ namespace OpenRA
 			if (!string.IsNullOrEmpty(supportDirArg))
 				Platform.OverrideSupportDir(supportDirArg);
 
+			// Per-run output folders, so automated runs can go in parallel without sharing log files.
+			var logDirArg = args.GetValue("Engine.LogDir", null);
+			if (!string.IsNullOrEmpty(logDirArg))
+				Platform.OverrideLogDir(logDirArg);
+
+			var replayDirArg = args.GetValue("Engine.ReplayDir", null);
+			if (!string.IsNullOrEmpty(replayDirArg))
+				Platform.OverrideReplayDir(replayDirArg);
+
 			Console.WriteLine($"Platform is {Platform.CurrentPlatform} ({Platform.CurrentArchitecture})");
 
 			// Load the engine version as early as possible so it can be written to exception logs

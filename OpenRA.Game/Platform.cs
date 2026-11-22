@@ -232,6 +232,34 @@ namespace OpenRA
 			userSupportPath = path;
 		}
 
+		static string logDirOverride;
+
+		/// <summary>Where log files go: SupportDir/Logs, unless overridden (Engine.LogDir).</summary>
+		public static string LogDir => logDirOverride ?? Path.Combine(SupportDir, "Logs");
+
+		/// <summary>
+		/// Where new replays are recorded, if overridden (Engine.ReplayDir); otherwise null and replays go to
+		/// SupportDir/Replays/[mod]/[version]. The replay browser still lists SupportDir only.
+		/// </summary>
+		public static string ReplayDirOverride { get; private set; }
+
+		/// <summary>
+		/// Send this process's logs to their own folder (created if needed), e.g. one per automated test run,
+		/// while settings and content stay in the shared support directory. Call before the first log channel is added.
+		/// </summary>
+		public static void OverrideLogDir(string path)
+		{
+			logDirOverride = Path.GetFullPath(path);
+			Directory.CreateDirectory(logDirOverride);
+		}
+
+		/// <summary>Record this process's replays into the given folder (created if needed).</summary>
+		public static void OverrideReplayDir(string path)
+		{
+			ReplayDirOverride = Path.GetFullPath(path);
+			Directory.CreateDirectory(ReplayDirOverride);
+		}
+
 		public static string EngineDir
 		{
 			get

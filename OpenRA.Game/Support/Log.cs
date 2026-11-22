@@ -108,7 +108,7 @@ namespace OpenRA
 
 		static IEnumerable<string> FilenamesForChannel(string baseFilename)
 		{
-			var path = Platform.SupportDir + "Logs";
+			var path = Platform.LogDir;
 			Directory.CreateDirectory(path);
 
 			for (var i = 0; i < CreateLogFileMaxRetryCount; i++)
