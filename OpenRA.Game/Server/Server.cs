@@ -1412,8 +1412,13 @@ namespace OpenRA.Server
 
 				State = ServerState.GameStarted;
 
+				// A local game keeps the engine's usual buffer of 3 ticks of orders whatever the frame size: with a frame of
+				// one tick, a latency of one frame left a single tick to get each tick's orders back from the local server,
+				// and the world missed about every third logic tick (jerky movement and animation).
 				if (IsMultiplayer)
 					OrderLatency = gameSpeed.OrderLatency;
+				else
+					OrderLatency = Math.Max(1, (3 + LobbyInfo.GlobalSettings.NetFrameInterval - 1) / LobbyInfo.GlobalSettings.NetFrameInterval);
 
 				LobbyInfo.GlobalSettings.GameTimestep = gameSpeed.Timestep;
 
