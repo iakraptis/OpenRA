@@ -34,6 +34,10 @@ namespace OpenRA
 		[Desc("With Game.Platform=Null: run logic ticks back to back instead of at the game speed's timestep (read in Game.Initialize).")]
 		public bool Uncapped;
 
+		[Desc("End an automated test run as failed (exit code 2 on the Null platform) when the world reaches this tick " +
+			"without a result from Test.Pass/Fail (read in Game.Initialize). 0 = no limit.")]
+		public int MaxTicks;
+
 		public LaunchArguments(Arguments args)
 		{
 			if (args == null)

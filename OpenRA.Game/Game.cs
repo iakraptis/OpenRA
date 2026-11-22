@@ -396,6 +396,8 @@ namespace OpenRA
 					Console.WriteLine("Launch.Uncapped is ignored without Game.Platform=Null.");
 			}
 
+			maxTicks = FieldLoader.GetValue<int>("Launch.MaxTicks", args.GetValue("Launch.MaxTicks", "0"));
+
 			Log.AddChannel("perf", "perf.log");
 			Log.AddChannel("debug", "debug.log");
 			Log.AddChannel("server", "server.log", true);
@@ -705,6 +707,17 @@ namespace OpenRA
 			InnerLogicTick(OrderManager);
 			if (worldRenderer != null && OrderManager.World != worldRenderer.World)
 				InnerLogicTick(worldRenderer.World.OrderManager);
+
+			var world = OrderManager.World;
+			if (maxTicks > 0 && world != null && world.Type == WorldType.Regular && world.WorldTick >= maxTicks)
+				EndTest(RunStatus.TestTickLimit,
+					$"TEST FAIL: tick limit reached (world tick {world.WorldTick}, Launch.MaxTicks={maxTicks}) with no test result.");
+
+			// A replay stops at its last recorded frame and then waits forever. Without a window there is nobody to close
+			// it, so end the run there (a desync would already have ended it with OutOfSync).
+			if (IsHeadless && OrderManager.Connection is ReplayConnection replay && OrderManager.NetFrameNumber >= replay.TickCount)
+				EndTest(RunStatus.Success,
+					$"Replay finished in sync at net frame {OrderManager.NetFrameNumber} (world tick {world?.WorldTick}).");
 		}
 
 		public static void PerformDelayedActions()
@@ -987,6 +1000,30 @@ namespace OpenRA
 		public static void Exit()
 		{
 			state = RunStatus.Success;
+		}
+
+		static bool testEnded;
+		static int maxTicks;
+
+		/// <summary>
+		/// Report the result of an automated test run (Test.Pass/Fail, Launch.MaxTicks, a fatal Lua error, a desync).
+		/// The first result wins. It is printed to stdout; on the Null platform the game then exits with
+		/// <paramref name="status"/> as its exit code. Windowed, the game keeps running so the result can be inspected.
+		/// </summary>
+		public static void EndTest(RunStatus status, string message)
+		{
+			if (testEnded)
+				return;
+
+			testEnded = true;
+			if (!string.IsNullOrEmpty(message))
+				Console.WriteLine(message);
+
+			if (IsHeadless)
+			{
+				Console.WriteLine($"Test run ended: {status} (exit code {(int)status}).");
+				state = status;
+			}
 		}
 
 		public static void Disconnect()

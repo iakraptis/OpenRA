@@ -21,11 +21,15 @@ namespace OpenRA.Platforms.Null
 {
 	public class NullPlatform : IPlatform
 	{
+		// Used when the settings give no size: fullscreen modes default to 0x0, meaning "the desktop's size",
+		// which a real window gets from the OS. A zero-sized screen breaks interface layout (e.g. divisions by width).
+		static readonly Size DefaultSize = new(1920, 1080);
+
 		public IPlatformWindow CreateWindow(
 			Size size, WindowMode windowMode, float scaleModifier,
 			int vertexBatchSize, int indexBatchSize, int videoDisplay, GLProfile profile)
 		{
-			return new NullPlatformWindow(size);
+			return new NullPlatformWindow(size.Width > 0 && size.Height > 0 ? size : DefaultSize);
 		}
 
 		public ISoundEngine CreateSound(string device)

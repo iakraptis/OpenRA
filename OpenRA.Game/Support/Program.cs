@@ -11,10 +11,27 @@
 
 namespace OpenRA
 {
+	/// <summary>The process exit code. Values 1-5 are only produced by automated (headless) test runs.</summary>
 	public enum RunStatus
 	{
+		/// <summary>Unhandled exception (crash).</summary>
 		Error = -1,
+
+		/// <summary>Normal exit, or Test.Pass().</summary>
 		Success = 0,
+
+		/// <summary>Test.Fail(reason).</summary>
+		TestFailed = 1,
+
+		/// <summary>The world reached Launch.MaxTicks before the test reported a result.</summary>
+		TestTickLimit = 2,
+
+		/// <summary>A fatal Lua error in the map script.</summary>
+		LuaError = 4,
+
+		/// <summary>The simulation went out of sync (e.g. a replay re-simulated differently).</summary>
+		OutOfSync = 5,
+
 		Running = int.MaxValue
 	}
 }

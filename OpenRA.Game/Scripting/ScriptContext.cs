@@ -246,6 +246,7 @@ namespace OpenRA.Scripting
 			Log.Write("lua", e.StackTrace);
 
 			FatalErrorOccurred = true;
+			Game.EndTest(RunStatus.LuaError, null);
 
 			World.AddFrameEndTask(w => World.EndGame());
 		}
@@ -261,6 +262,7 @@ namespace OpenRA.Scripting
 			Log.Write("lua", stacktrace);
 
 			FatalErrorOccurred = true;
+			Game.EndTest(RunStatus.LuaError, null);
 
 			World.AddFrameEndTask(w => World.EndGame());
 		}

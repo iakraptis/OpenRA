@@ -92,8 +92,9 @@ namespace OpenRA.Network
 			World.OutOfSync();
 			IsOutOfSync = true;
 
-			// Make desyncs visible to automated (headless) runs, which read stdout.
+			// Make desyncs visible to automated (headless) runs, which read stdout; headless, also end the run.
 			Console.WriteLine($"Out of sync in frame {frame}. See syncreport.log.");
+			Game.EndTest(RunStatus.OutOfSync, null);
 
 			TextNotificationsManager.AddSystemLine(DesyncCompareLogs, "frame", frame);
 		}
