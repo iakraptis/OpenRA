@@ -482,6 +482,12 @@ namespace OpenRA
 
 		public void Save(bool commitModules = true)
 		{
+			// A headless run (automated test, RL) reads the player's settings but must never write them back:
+			// saving would persist its command-line overrides, e.g. Game.Platform=Null, so the player's next game
+			// would start without a window. (Starting a local game saves the skirmish lobby settings.)
+			if (Game.Platform == "Null")
+				return;
+
 			if (commitModules)
 				foreach (var m in modules)
 					((SettingsModule)m).Commit();
