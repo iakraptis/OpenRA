@@ -31,6 +31,9 @@ namespace OpenRA
 		[Desc("Automatically start playing the given map.")]
 		public string Map;
 
+		[Desc("With Game.Platform=Null: run logic ticks back to back instead of at the game speed's timestep (read in Game.Initialize).")]
+		public bool Uncapped;
+
 		public LaunchArguments(Arguments args)
 		{
 			if (args == null)

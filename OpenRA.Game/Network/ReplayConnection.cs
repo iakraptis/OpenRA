@@ -37,7 +37,7 @@ namespace OpenRA.Network
 		public ReplayConnection(string replayFilename)
 		{
 			Filename = replayFilename;
-			FinalGameTick = ReplayMetadata.Read(replayFilename).GameInfo.FinalGameTick;
+			var metadata = ReplayMetadata.Read(replayFilename);
 
 			// Parse replay data into a struct that can be fed to the game in chunks
 			// to avoid issues with all immediate orders being resolved on the first tick.
@@ -45,13 +45,16 @@ namespace OpenRA.Network
 			{
 				var packets = new List<(int ClientId, byte[] Packet)>();
 				var chunk = new Chunk();
-				while (rs.Position < rs.Length)
+				while (rs.Position + 8 <= rs.Length)
 				{
 					var client = rs.ReadInt32();
 					if (client == ReplayMetadata.MetaStartMarker)
 						break;
 
 					var packetLen = rs.ReadInt32();
+					if (packetLen < 0 || rs.Position + packetLen > rs.Length)
+						break;
+
 					var packet = rs.ReadBytes(packetLen);
 					var frame = BitConverter.ToInt32(packet, 0);
 					packets.Add((client, packet));
@@ -86,6 +89,11 @@ namespace OpenRA.Network
 					}
 				}
 			}
+
+			// Use the metadata's FinalGameTick if available, otherwise fall back to TickCount: a game that was
+			// stopped instead of quit (e.g. an automated test run) writes no metadata, and may end mid-packet.
+			// From OpenRA-RL (yxc20089/OpenRA@9b271c1).
+			FinalGameTick = metadata?.GameInfo?.FinalGameTick ?? TickCount;
 
 			var gameSpeeds = Game.ModData.GetOrCreate<GameSpeeds>();
 			var gameSpeedName = LobbyInfo.GlobalSettings.OptionOrDefault("gamespeed", gameSpeeds.DefaultSpeed);

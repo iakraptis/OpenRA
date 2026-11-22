@@ -44,6 +44,15 @@ namespace OpenRA
 		public static CursorManager Cursor;
 		public static bool HideCursor;
 
+		/// <summary>True when running on the Null platform (Game.Platform=Null): no window, GPU or audio.</summary>
+		public static bool IsHeadless => Settings?.Game?.Platform == "Null";
+
+		/// <summary>
+		/// True when Launch.Uncapped=true on the Null platform: logic ticks run back to back,
+		/// without waiting for the game speed's timestep and without rendering.
+		/// </summary>
+		public static bool IsUncapped { get; private set; }
+
 		static WorldRenderer worldRenderer;
 		static string modLaunchWrapper;
 
@@ -378,6 +387,15 @@ namespace OpenRA
 
 			InitializeSettings(args);
 
+			if (FieldLoader.GetValue<bool>("Launch.Uncapped", args.GetValue("Launch.Uncapped", "false")))
+			{
+				// Uncapped ticking skips rendering entirely, so it only makes sense without a window.
+				if (IsHeadless)
+					IsUncapped = true;
+				else
+					Console.WriteLine("Launch.Uncapped is ignored without Game.Platform=Null.");
+			}
+
 			Log.AddChannel("perf", "perf.log");
 			Log.AddChannel("debug", "debug.log");
 			Log.AddChannel("server", "server.log", true);
@@ -664,8 +682,9 @@ namespace OpenRA
 						PerfHistory.Tick(!world.Paused);
 					}
 
-					// Wait until we have done our first world Tick before TickRendering
-					if (orderManager.LocalFrameNumber > 0)
+					// Wait until we have done our first world Tick before TickRendering.
+					// Nothing is drawn on the Null platform, so skip the render-side ticking there.
+					if (orderManager.LocalFrameNumber > 0 && !IsHeadless)
 						Sync.RunUnsynced(world, () => world.TickRender(worldRenderer));
 				}
 
@@ -807,6 +826,12 @@ namespace OpenRA
 			// than this, then that limit will be used.
 			const int MinReplayFps = 10;
 
+			if (IsUncapped)
+			{
+				UncappedLoop();
+				return;
+			}
+
 			// Timestamps for when the next logic and rendering should run
 			var nextLogic = RunTime;
 			var nextRender = RunTime;
@@ -893,6 +918,39 @@ namespace OpenRA
 				}
 				else
 					Thread.Sleep((int)(nextUpdate - now));
+			}
+		}
+
+		// Headless (Launch.Uncapped=true) loop: logic ticks back to back, no timestep pacing and no rendering.
+		// The simulation itself is unchanged; it only stops waiting for the wall clock between ticks.
+		// Based on the fast-forward loop in OpenRA-RL (yxc20089/OpenRA@9b271c1, Game.Loop).
+		static void UncappedLoop()
+		{
+			// Bound each burst so that delayed actions, connection state changes and the
+			// local server's thread all get a turn even while the world ticks continuously.
+			const int MaxTicksPerBurst = 5000;
+
+			while (state == RunStatus.Running)
+			{
+				var startFrame = OrderManager.LocalFrameNumber;
+				for (var i = 0; i < MaxTicksPerBurst && state == RunStatus.Running; i++)
+				{
+					// Backdate the last tick time so ShouldAdvance() lets the next world tick through now.
+					var frame = OrderManager.LocalFrameNumber;
+					OrderManager.LastTickTime.Value = 0;
+					LogicTick();
+
+					// The UI normally ticks on its own wall-clock timer, about once per world tick at game speed.
+					// Uncapped, thousands of world ticks would pass between UI ticks and panels would lag behind
+					// the world (tests that select a unit and then read a panel would see stale state).
+					// So after each world tick, let the UI tick once at the start of the next LogicTick.
+					if (OrderManager.LocalFrameNumber != frame)
+						Ui.LastTickTime.Value = 0;
+				}
+
+				// Nothing advanced (menu, lobby, or waiting for the server's next frame): don't spin a core.
+				if (OrderManager.LocalFrameNumber == startFrame)
+					Thread.Sleep(1);
 			}
 		}
 

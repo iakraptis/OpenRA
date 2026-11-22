@@ -82,7 +82,17 @@ namespace OpenRA.Mods.Common.LoadScreens
 				}
 				catch { }
 
-				if (ReplayUtils.PromptConfirmReplayCompatibility(replayMeta, Game.ModData, Game.LoadShellMap))
+				// Without a window nobody can answer the compatibility dialog, so play the replay directly.
+				// Replays from stopped (not quit) games have no metadata; the per-frame sync check still
+				// reports any mismatch. Based on OpenRA-RL (yxc20089/OpenRA@9b271c1).
+				if (Game.IsHeadless)
+				{
+					if (replayMeta == null)
+						Console.WriteLine("Replay has no metadata (the game was stopped, not quit); playing it anyway.");
+
+					Game.JoinReplay(Launch.Replay);
+				}
+				else if (ReplayUtils.PromptConfirmReplayCompatibility(replayMeta, Game.ModData, Game.LoadShellMap))
 					Game.JoinReplay(Launch.Replay);
 
 				if (replayMeta != null)
