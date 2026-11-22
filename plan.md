@@ -1,7 +1,9 @@
 # Headless test runs and RL bridge: plan
 
 Branch `headless-rl`, recreated 2026-11-21 from `jmods` (`9f29d43`) = upstream bleed `4cc9a9f` + one movement fix
-("Move: plan the first path through other units, not around them"). Engine fork: `iakraptis/OpenRA`.
+("Move: plan the first path through other units, not around them"); rebased 2026-11-22 onto `netframe` (`90e2d05` =
+`jmods` + NetFrameInterval per game speed), which OpenPW now uses. Engine fork: `iakraptis/OpenRA`. Upstream's
+`AGENTS.md` was removed from this fork by its owner (2026-11-22): the fork is independent of the OpenRA project.
 
 Goals, in order:
 
@@ -11,8 +13,9 @@ Goals, in order:
    a single game.
 3. **RL / external agents.** Let a Python agent (scripted, LLM or RL) play our mods through OpenRA-RL's gRPC bridge.
 
-Status (2026-11-21): **Phase 1 done** (uncommitted on `headless-rl`). OpenPW `bot-test` 654 s → 68 s, OpenSYW
-`bot-test` 131 s → 6.6 s, same verdicts as windowed on every map, replays in sync. Next: Phase 2.
+Status (2026-11-22): **Phases 1–3 done in the engine** (committed on `headless-rl`, not pushed). Rebased onto
+`netframe` (`90e2d05`), which OpenPW now uses. OpenPW's whole suite runs in 87 s (was ~18 min), OpenSYW's in 8 s (was
+~3.7 min), same verdicts as windowed. Next: push, mods switch over (`docs/mod-updates/headless-tests.md`), then Phase 4.
 
 ---
 
@@ -162,27 +165,46 @@ Findings:
 
 **Decision point: passed** (9.6× and 20× on `bot-test`, target ≥ 3×).
 
-### Phase 2: test protocol
+### Phase 2: test protocol (done 2026-11-22, `6d4b295637`)
 
-- [ ] `Launch.MaxTicks=N`: end with a timeout after N world ticks (replaces wall-clock timeouts).
-- [ ] Lua `Test` global: `Test.Pass()`, `Test.Fail(message)`, `Test.Log(message)`. Exit codes: `0` pass, `1` fail,
-      `2` tick budget, `3` crash (stack trace on stderr), `4` fatal Lua error. Flush logs before exiting.
-- [ ] When headless, echo Lua `print` and `Fatal Lua Error` to stdout as well as `lua.log`.
-- [ ] Mods' `testlib.lua`: call `Test.Pass` / `Test.Fail`, keeping the `TEST PASS` lines for windowed runs.
+- [x] Exit codes (`RunStatus`): `0` pass, `1` fail, `2` tick limit, `4` fatal Lua error, `5` out of sync, `-1` crash
+      (unchanged; report on stderr, no dialog). `Game.EndTest(status, message)`: first result wins, printed to stdout;
+      headless the game exits with it, windowed it keeps running.
+- [x] Lua global `Test`: `Test.Pass(line?)`, `Test.Fail(line?)`, `Test.Headless`. (No `Test.Log`: Lua `print`
+      already reaches stdout as `Lua debug: …` on bleed.)
+- [x] `Launch.MaxTicks=N`.
+- [x] A headless replay ends at its last recorded frame (exit `0`, "Replay finished in sync…") instead of waiting
+      forever; a desync ends it with `5`.
+- [x] Null platform falls back to 1920×1080 when the settings give no size (the default `PseudoFullscreen` is `0×0`;
+      it crashed OpenPW's interface bar layout with a division by zero).
+- Checked on OpenPW: each code from a matching map or replay. `combat-test` 0; a copy with a failing check 1; a copy
+  with a Lua error 4; `bot-test` with `MaxTicks=300` 2; a `bot-test` replay 0, and with every Demon unit's cost
+  changed 5 (out of sync at frame 24). Changing one building's cost didn't desync: it isn't bought in 2,000 ticks.
+- [ ] Mods' `testlib.lua`: call `Test.Pass` / `Test.Fail` (`if Test then …`). Mod agents; see
+      `docs/mod-updates/headless-tests.md`.
 
-### Phase 3: parallel runs and one shared runner
+**Found while testing (fixed, `31016261c8`): headless runs wrote the player's settings.** Starting a local game saves
+the skirmish lobby settings, which persisted the command-line `Game.Platform=Null` into
+`%APPDATA%\OpenRA\settings.yaml`. Engines without the null platform fall back to the normal window; this branch's
+build would have started without one. The line was removed from the settings file (backup in the session
+scratchpad), and `Settings.Save` is now a no-op on the null platform.
 
-- [ ] `Engine.LogDir=<path>`: per-run log folder while `SupportDir` (and `Content/<mod>/`) stays shared. Fallback: a
-      temporary support dir with a junction to `Content`.
-- [ ] `tools/run_tests.py` in the engine repo, called from each mod with its mod id, map folders and tick budgets:
-  - no `taskkill` (it also kills a game being played);
-  - `--jobs N` (default: cores / 2);
-  - each run with `Game.Platform=Null Launch.Uncapped=true Launch.MaxTicks=… Engine.LogDir=test-results/<map>/`;
-  - verdict from the exit code and stdout;
-  - `--windowed` to watch one test;
-  - same `summary.md` format.
-- [ ] Each mod: bump the engine hash, switch `run_tests.py` to the shared runner, run the full suite. Verdicts must
-      match the windowed baseline.
+### Phase 3: parallel runs and one shared runner (done 2026-11-22, `45e568cb05`)
+
+- [x] `Engine.LogDir=<path>` and `Engine.ReplayDir=<path>`: one game's logs and new replays in their own folders;
+      settings and `Content/<mod>/` stay shared. (The logger already avoided crashing on a busy file by switching to
+      `lua.log.1`, but a runner couldn't tell which file was its own.)
+- [x] `tools/run_tests.py`: every `*-test` map of the mod (`mods/<id>/maps` and the installer's `Content/<mod>/maps` or
+      `Content/<mod>/<version>/maps`); `--jobs N` (default half the cores, at most 8); each run headless + uncapped
+      with a pinned 1920×1080 screen, its own `logs/`, replay, `stdout.txt`, `stderr.txt`; verdict from the exit code,
+      or from the PASS/FAIL line for scripts that don't call `Test.Pass/Fail` yet (it then stops that game only);
+      `--windowed`; optional `tests.json`; the same `summary.md` table plus an exit-code column. Never touches other
+      processes.
+- [x] Measured on the real mod folders: OpenPW 13 maps in **87 s** (8 at a time; `bot-test` 87 s alone dominates),
+      OpenSYW 9 maps in **8 s**. Verdicts as windowed: OpenPW `tyrano-test` (since OpenPW's "balance" commit
+      `6384406`, confirmed windowed on the same build) and `bot-medium-test`, OpenSYW `pathing-test`.
+- [ ] Each mod: bump the engine hash (after the push), switch to the shared runner, compare with windowed. Handoff:
+      `docs/mod-updates/headless-tests.md`.
 
 ### Phase 4: more bot battles
 
@@ -239,6 +261,8 @@ Findings:
 | 2026-11-21 | `headless-rl` (Phase 1) | uncapped, sequential | OpenPW 12 maps | 166 s | | was 1087 s windowed |
 | 2026-11-21 | `headless-rl` (Phase 1) | uncapped, sequential | OpenSYW `bot-test` | 6.6 s | ~2,400 | PASS; start-up 1.5 s |
 | 2026-11-21 | `headless-rl` (Phase 1) | uncapped, sequential | OpenSYW 9 maps | 23 s | | was ~223 s windowed (8 maps) |
+| 2026-11-22 | `headless-rl` (Phase 3, on `netframe`) | shared runner, 8 at a time | OpenPW 13 maps (incl. `bot-test`) | 87 s | | was ~1087 s windowed |
+| 2026-11-22 | `headless-rl` (Phase 3, on `netframe`) | shared runner, 8 at a time | OpenSYW 9 maps | 8 s | | was ~223 s windowed |
 
 ## 6. Open questions
 
