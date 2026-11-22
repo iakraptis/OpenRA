@@ -1397,12 +1397,15 @@ namespace OpenRA.Server
 				if (recorder != null)
 					recorder.Metadata = new ReplayMetadata(gameInfo);
 
-				SyncLobbyInfo();
-
 				var gameSpeeds = Game.ModData.GetOrCreate<GameSpeeds>();
 				var gameSpeedName = LobbyInfo.GlobalSettings.OptionOrDefault("gamespeed", gameSpeeds.DefaultSpeed);
 
 				var gameSpeed = gameSpeeds.Speeds[gameSpeedName];
+
+				// Before the lobby is sent for the last time: the clients, the replay and the game save read it there.
+				LobbyInfo.GlobalSettings.NetFrameInterval = Math.Max(1, gameSpeed.NetFrameInterval);
+
+				SyncLobbyInfo();
 
 				orderBuffer = new OrderBuffer();
 				orderBuffer.Start(gameSpeed, Conns.Where(c => c.Validated).Select(c => c.PlayerIndex));

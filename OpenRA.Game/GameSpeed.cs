@@ -25,6 +25,11 @@ namespace OpenRA
 
 		[FieldLoader.Require]
 		public readonly int OrderLatency;
+
+		// World ticks per network frame: orders are sent, applied and sync-checked once a frame, and OrderLatency
+		// counts frames. Grouping ticks absorbs network jitter at the cost of input latency; a mod with long ticks
+		// can use fewer per frame (and more frames of OrderLatency) for the same buffer with less waiting.
+		public readonly int NetFrameInterval = 3;
 	}
 
 	public class GameSpeeds : IGlobalModData
