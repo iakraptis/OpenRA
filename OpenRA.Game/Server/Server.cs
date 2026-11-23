@@ -304,7 +304,10 @@ namespace OpenRA.Server
 
 			playerDatabase = modData.GetOrCreate<PlayerDatabase>();
 
-			randomSeed = (int)DateTime.Now.ToBinary();
+			// Launch.Seed fixes the seed of local games (repeatable automated runs); dedicated servers never use it.
+			randomSeed = type != ServerType.Dedicated && Game.LaunchSeed is int launchSeed
+				? launchSeed
+				: (int)DateTime.Now.ToBinary();
 
 			if (IsMultiplayer && settings.EnableGeoIP)
 				GeoIP.Initialize();

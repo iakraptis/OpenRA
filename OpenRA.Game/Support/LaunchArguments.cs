@@ -38,6 +38,10 @@ namespace OpenRA
 			"without a result from Test.Pass/Fail (read in Game.Initialize). 0 = no limit.")]
 		public int MaxTicks;
 
+		[Desc("Fixed random seed for local games and bot decisions, so a headless game can be repeated exactly " +
+			"(read in Game.Initialize). Unset: random, as before.")]
+		public int? Seed;
+
 		public LaunchArguments(Arguments args)
 		{
 			if (args == null)

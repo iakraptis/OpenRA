@@ -197,7 +197,12 @@ namespace OpenRA
 			Timestep = ReplayTimestep = GameSpeed.Timestep;
 
 			SharedRandom = new MersenneTwister(orderManager.LobbyInfo.GlobalSettings.RandomSeed);
-			LocalRandom = new MersenneTwister();
+
+			// Bots draw their decisions from LocalRandom. With Launch.Seed it is seeded too (from a different value than
+			// SharedRandom, so the two streams don't mirror each other); otherwise it stays random, as before.
+			LocalRandom = Game.LaunchSeed is int launchSeed
+				? new MersenneTwister(unchecked(launchSeed * 31 + 17))
+				: new MersenneTwister();
 
 			var worldActorType = type == WorldType.Editor ? SystemActors.EditorWorld : SystemActors.World;
 			WorldActor = CreateActor(worldActorType.ToString(), []);

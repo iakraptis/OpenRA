@@ -5,7 +5,12 @@ Usage, from a mod repository (Mod SDK layout, engine in ./engine):
   python engine/tools/run_tests.py --only a-test,b-test  # some maps
   python engine/tools/run_tests.py --jobs 4              # at most 4 games at once
   python engine/tools/run_tests.py --windowed --only a-test   # watch one test in a window
+  python engine/tools/run_tests.py --only bot-test --seed 1 --repeat 20   # 20 seeded games of one map
+  python engine/tools/run_tests.py --pattern "battle-*" --repeat 10       # other maps than *-test
 Options for other layouts: --mod-dir, --mod, --engine, --results.
+
+Seeds (Launch.Seed) make a headless game repeatable: the same map and seed give the same game (the same final
+sync hash, shown per run). Without --seed, games are random as before; --repeat without --seed uses seeds 1..N.
 
 Each test map runs as its own game with Game.Platform=Null (no window) and Launch.Uncapped=true (no waiting for the
 game speed's timestep), with its logs and replay in its own folder under the results directory. The verdict comes from
@@ -21,6 +26,8 @@ Optional per-mod settings in <mod-dir>/tests.json:
 """
 import argparse
 import concurrent.futures
+import csv
+import fnmatch
 import json
 import os
 import re
@@ -30,6 +37,7 @@ import threading
 import time
 from pathlib import Path
 
+FINAL_STATE = re.compile(r'Final state: world tick (\d+), sync hash (-?\d+)')
 PASS_LINE = re.compile(r'TEST PASS')
 FAIL_LINE = re.compile(r'TEST FAIL|FAIL:|Fatal Lua Error')
 EXIT_VERDICTS = {0: 'PASS', 1: 'FAIL', 2: 'FAIL (tick limit)', 4: 'FAIL (Lua error)', 5: 'FAIL (out of sync)'}
@@ -64,19 +72,19 @@ def content_map_dirs(mod: str) -> list:
     return sorted(p for p in [base / 'maps', *base.glob('*/maps')] if p.is_dir())
 
 
-def find_maps(mod_dir: Path, mod: str, use_content: bool) -> list:
+def find_maps(mod_dir: Path, mod: str, use_content: bool, pattern: str) -> list:
     folders = [mod_dir / 'mods' / mod / 'maps'] + (content_map_dirs(mod) if use_content else [])
     names = set()
     for folder in folders:
         if folder.is_dir():
-            names |= {p.name for p in folder.iterdir() if p.name.endswith('-test')}
+            names |= {p.name for p in folder.iterdir() if fnmatch.fnmatch(p.name, pattern)}
     return sorted(names)
 
 
-def run_map(name: str, args, config: dict, results: Path) -> dict:
-    out_dir = results / name
+def run_map(name: str, seed, args, config: dict, results: Path) -> dict:
+    out_dir = results / name if seed is None else results / name / f'seed-{seed}'
     out_dir.mkdir(parents=True, exist_ok=True)
-    max_ticks = config.get('max_ticks', {}).get(name, config.get('default_max_ticks', 0))
+    max_ticks = args.max_ticks or config.get('max_ticks', {}).get(name, config.get('default_max_ticks', 0))
     timeout = config.get('timeout_seconds', {}).get(name, config.get('default_timeout_seconds', 600))
 
     cmd = game_command(args.engine) + [
@@ -87,18 +95,23 @@ def run_map(name: str, args, config: dict, results: Path) -> dict:
         cmd += ['Game.Platform=Null', 'Launch.Uncapped=true'] + SCREEN
     if max_ticks:
         cmd.append(f'Launch.MaxTicks={max_ticks}')
+    if seed is not None:
+        cmd.append(f'Launch.Seed={seed}')
 
     started = time.time()
     stdout_path, stderr_path = out_dir / 'stdout.txt', out_dir / 'stderr.txt'
     with open(stdout_path, 'w', encoding='utf-8') as out, open(stderr_path, 'w', encoding='utf-8') as err:
         proc = subprocess.Popen(cmd, cwd=args.engine, stdout=subprocess.PIPE, stderr=err, text=True,
                                 encoding='utf-8', errors='replace', bufsize=1)
-        seen = {'pass': None, 'fail': None, 'last': ''}
+        seen = {'pass': None, 'fail': None, 'last': '', 'final': None}
 
         def pump():
             for line in proc.stdout:
                 out.write(line)
                 text = line.strip()
+                final = FINAL_STATE.search(text)
+                if final:
+                    seen['final'] = (int(final.group(1)), final.group(2))
                 if 'TEST' in text or 'Fatal Lua' in text or 'Out of sync' in text or 'tick limit' in text:
                     seen['last'] = text
                 if seen['fail'] is None and FAIL_LINE.search(text):
@@ -146,7 +159,10 @@ def run_map(name: str, args, config: dict, results: Path) -> dict:
     if stopped_by_runner and stopped_by_runner != 'result line':
         detail = f'{stopped_by_runner}; last: {seen["last"]}'
     detail = re.sub(r'^Lua debug: ', '', detail)
-    return {'map': name, 'verdict': verdict, 'exit': code_text, 'seconds': time.time() - started, 'detail': detail}
+    tick, sync_hash = seen['final'] or ('', '')
+    return {'map': name, 'seed': '' if seed is None else seed, 'verdict': verdict, 'exit': code_text,
+            'seconds': time.time() - started, 'final_tick': tick, 'sync_hash': sync_hash, 'detail': detail,
+            'output': str(out_dir)}
 
 
 def main():
@@ -159,7 +175,13 @@ def main():
     parser.add_argument('--jobs', type=int, default=max(1, min(8, (os.cpu_count() or 2) // 2)),
                         help='games at once (default: half the cores, at most 8)')
     parser.add_argument('--windowed', action='store_true', help='run with a window at normal speed, one at a time')
+    parser.add_argument('--pattern', default='*-test', help='map folder names to run (default: *-test)')
+    parser.add_argument('--seed', type=int, help='Launch.Seed for the first run of each map (repeatable games)')
+    parser.add_argument('--repeat', type=int, default=1, help='runs per map, with seeds seed, seed+1, ...')
+    parser.add_argument('--max-ticks', type=int, help='Launch.MaxTicks for every run (overrides tests.json)')
     args = parser.parse_args()
+    if args.repeat > 1 and args.seed is None:
+        args.seed = 1
 
     args.mod_dir = args.mod_dir.resolve()
     mod_config = read_mod_config(args.mod_dir)
@@ -175,33 +197,54 @@ def main():
     config_path = args.mod_dir / 'tests.json'
     config = json.loads(config_path.read_text(encoding='utf-8')) if config_path.is_file() else {}
     maps = args.only.split(',') if args.only else [
-        m for m in find_maps(args.mod_dir, args.mod, config.get('content_maps', True)) if m not in config.get('manual', [])]
+        m for m in find_maps(args.mod_dir, args.mod, config.get('content_maps', True), args.pattern)
+        if m not in config.get('manual', [])]
     if not maps:
-        sys.exit('No test maps found')
+        sys.exit(f'No maps matching {args.pattern} found')
+    seeds = [None] if args.seed is None else [args.seed + i for i in range(max(1, args.repeat))]
+    runs = [(m, s) for m in maps for s in seeds]
     jobs = 1 if args.windowed else max(1, args.jobs)
-    print(f'{len(maps)} maps, {jobs} at a time, {"windowed" if args.windowed else "headless, uncapped"}; '
-          f'results in {results}', flush=True)
+    mode = 'windowed' if args.windowed else 'headless, uncapped'
+    seed_text = '' if args.seed is None else f', seeds {seeds[0]}..{seeds[-1]}'
+    print(f'{len(maps)} maps, {len(runs)} runs, {jobs} at a time, {mode}{seed_text}; results in {results}', flush=True)
 
     started = time.time()
     rows = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        futures = {pool.submit(run_map, m, args, config, results): m for m in maps}
+        futures = [pool.submit(run_map, m, s, args, config, results) for m, s in runs]
         for future in concurrent.futures.as_completed(futures):
             r = future.result()
             rows.append(r)
-            print(f'{r["map"]:26} {r["verdict"]:18} {r["seconds"]:6.1f}s  {r["detail"][:110]}', flush=True)
+            label = r['map'] if r['seed'] == '' else f'{r["map"]} seed {r["seed"]}'
+            print(f'{label:34} {r["verdict"]:18} {r["seconds"]:6.1f}s  {r["detail"][:100]}', flush=True)
     total = time.time() - started
 
-    rows.sort(key=lambda r: r['map'])
+    rows.sort(key=lambda r: (r['map'], r['seed'] if r['seed'] != '' else -1))
     passed = sum(r['verdict'] == 'PASS' for r in rows)
     lines = ['# Test suite results', '',
-             f'{passed}/{len(rows)} maps passed in {total:.0f}s ({jobs} at a time, '
-             f'{"windowed" if args.windowed else "headless, uncapped"}); engine: {args.engine}', '',
-             '| Map | Result | Exit | Time | Detail |', '|---|---|---|---:|---|']
-    lines += [f'| {r["map"]} | {r["verdict"]} | {r["exit"]} | {r["seconds"]:.0f}s | {r["detail"].replace("|", "/")} |'
-              for r in rows]
+             f'{passed}/{len(rows)} runs passed in {total:.0f}s ({jobs} at a time, {mode}{seed_text}); '
+             f'engine: {args.engine}', '']
+    if len(seeds) > 1:
+        lines += ['| Map | Passed | Runs |', '|---|---:|---:|']
+        for m in maps:
+            mine = [r for r in rows if r['map'] == m]
+            lines.append(f'| {m} | {sum(r["verdict"] == "PASS" for r in mine)} | {len(mine)} |')
+        lines.append('')
+    lines += ['| Map | Seed | Result | Exit | Time | Final tick | Sync hash | Detail |',
+              '|---|---:|---|---|---:|---:|---:|---|']
+    lines += [f'| {r["map"]} | {r["seed"]} | {r["verdict"]} | {r["exit"]} | {r["seconds"]:.0f}s | {r["final_tick"]} | '
+              f'{r["sync_hash"]} | {r["detail"].replace("|", "/")} |' for r in rows]
     (results / 'summary.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    print(f'\n{passed}/{len(rows)} passed in {total:.0f}s; see {results / "summary.md"}')
+
+    # One row per run, for tools that aggregate battles (each run's stdout and logs are in its 'output' folder).
+    with open(results / 'runs.csv', 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['map', 'seed', 'verdict', 'exit', 'seconds', 'final_tick', 'sync_hash',
+                                               'detail', 'output'])
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({**r, 'seconds': f'{r["seconds"]:.1f}'})
+
+    print(f'\n{passed}/{len(rows)} passed in {total:.0f}s; see {results / "summary.md"} and runs.csv')
     sys.exit(0 if passed == len(rows) else 1)
 
 

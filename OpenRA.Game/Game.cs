@@ -53,6 +53,13 @@ namespace OpenRA
 		/// </summary>
 		public static bool IsUncapped { get; private set; }
 
+		/// <summary>
+		/// Launch.Seed=N: a fixed seed for local games (the lobby's RandomSeed, so SharedRandom) and for
+		/// World.LocalRandom (bot decisions), so a headless game can be repeated exactly. Null (the default):
+		/// both are random, as before. Windowed games may still differ, because rendering also draws from LocalRandom.
+		/// </summary>
+		public static int? LaunchSeed { get; private set; }
+
 		static WorldRenderer worldRenderer;
 		static string modLaunchWrapper;
 
@@ -406,6 +413,13 @@ namespace OpenRA
 			}
 
 			maxTicks = FieldLoader.GetValue<int>("Launch.MaxTicks", args.GetValue("Launch.MaxTicks", "0"));
+
+			var seedArg = args.GetValue("Launch.Seed", null);
+			if (!string.IsNullOrEmpty(seedArg))
+			{
+				LaunchSeed = FieldLoader.GetValue<int>("Launch.Seed", seedArg);
+				Console.WriteLine($"Random seed: {LaunchSeed}");
+			}
 
 			Log.AddChannel("perf", "perf.log");
 			Log.AddChannel("debug", "debug.log");
@@ -1030,6 +1044,12 @@ namespace OpenRA
 
 			if (IsHeadless)
 			{
+				// The sync hash covers the whole simulation state: two runs that print the same tick and hash
+				// played the same game (e.g. the same Launch.Seed twice).
+				var world = OrderManager?.World;
+				if (world != null && !world.Disposing)
+					Console.WriteLine($"Final state: world tick {world.WorldTick}, sync hash {world.SyncHash()}.");
+
 				Console.WriteLine($"Test run ended: {status} (exit code {(int)status}).");
 				state = status;
 			}
