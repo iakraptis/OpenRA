@@ -65,6 +65,17 @@ Follow the repo's own rules (branch, no push, the user merges, report what wasn'
 - OpenSYW `pathing-test`: the bridge crossing (work in progress, see `OpenSYW-ramp.md`). Its numbers vary between
   runs because each game gets a new random seed.
 
+## Seeded games (engine branch `seeded-battles`, after Phase 4 is merged and the user gives a new hash)
+
+- `Launch.Seed=N` makes a headless game repeatable: the same map and seed give the same game. Bots included.
+- The runner: `python engine/tools/run_tests.py --only bot-test --seed 1 --repeat 20` runs 20 seeded games, 8 at a
+  time, each in `test-results/bot-test/seed-<n>/`; `--pattern "battle-*"` selects battle maps; `--max-ticks N` caps
+  them. `runs.csv` has one row per game (verdict, time, final tick, sync hash, output folder) for battle statistics.
+  OpenPW: 8 seeded 20,000-tick `bot-test` games took 37 s.
+- The final tick and sync hash only appear when the game ends through the engine (`Test.Pass/Fail` or the tick
+  limit), so do step 2 above.
+- Windowed runs with a seed may differ from headless ones: rendering also draws from the bots' random stream.
+
 ## Good to know
 
 - A replay recorded by a headless run sits next to its logs. Played back headless

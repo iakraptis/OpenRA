@@ -13,9 +13,10 @@ Goals, in order:
    a single game.
 3. **RL / external agents.** Let a Python agent (scripted, LLM or RL) play our mods through OpenRA-RL's gRPC bridge.
 
-Status (2026-11-22): **Phases 1–3 done in the engine** (committed on `headless-rl`, not pushed). Rebased onto
-`netframe` (`90e2d05`), which OpenPW now uses. OpenPW's whole suite runs in 87 s (was ~18 min), OpenSYW's in 8 s (was
-~3.7 min), same verdicts as windowed. Next: push, mods switch over (`docs/mod-updates/headless-tests.md`), then Phase 4.
+Status (2026-11-23): **Phases 1–3 done and pushed** (`headless-rl` at `a539bcd57d`; OpenPW switched to it on a
+branch). OpenPW's whole suite runs in 87 s (was ~18 min), OpenSYW's in 8 s (was ~3.7 min), same verdicts as windowed.
+**Phase 4 (seeded games) done in the engine** on branch `seeded-battles` (not pushed): 8 seeded OpenPW battles in 37 s,
+reproducible. Next: Phase 5 (RL), starting with the engine bridge.
 
 ---
 
@@ -206,27 +207,64 @@ scratchpad), and `Settings.Save` is now a no-op on the null platform.
 - [ ] Each mod: bump the engine hash (after the push), switch to the shared runner, compare with windowed. Handoff:
       `docs/mod-updates/headless-tests.md`.
 
-### Phase 4: more bot battles
+### Phase 4: seeded games and repeat runs (engine part done 2026-11-23, branch `seeded-battles`, `b68afa1cba`)
 
-- [ ] `--battles --games N`: N seeded games per race pairing, in parallel. `battle_stats.py` reports means and spread,
-      not single results.
-- [ ] Record what a full battle run costs at N = 10 and N = 20.
+- [x] `Launch.Seed=N`: fixes the local server's lobby `RandomSeed` (`SharedRandom`, spawns, random factions) and seeds
+      `World.LocalRandom`, which the stock and mod bot modules draw from. Unset: random as before; dedicated servers
+      never use it. Caveat: rendering code (floating sprites, resource renderer, weather) also draws from
+      `LocalRandom`, so a **windowed** run with the same seed may differ; headless runs reproduce exactly.
+- [x] A headless run that ends through `Game.EndTest` prints `Final state: world tick N, sync hash H`.
+- [x] Runner: `--seed S --repeat N` (runs in `<map>/seed-<n>/`), `--pattern` (e.g. `battle-*`), `--max-ticks`;
+      final tick and sync hash per run in `summary.md`; `runs.csv` with one row per run.
+- Checked: OpenPW `bot-test`, seeds 1–8 × 20,000 ticks, 8 at a time: **37 s**, the same 8 hashes on a second
+  invocation, 8 different games. OpenSYW `bot-test` likewise (seeds 1–8 × 6,000 ticks). OpenPW `bot-test` 10,000
+  ticks with no seed: a different hash each run, as before.
+- The hash only appears when the game ends through the engine (`Test.Pass/Fail`, tick limit). Scripts that only print
+  `TEST PASS` are stopped by the runner first, so no hash: another reason for the `testlib.lua` change.
+- [ ] Mod side (mod agents): battle statistics from N seeded games per pairing, reporting means and spread (OpenPW's
+      `battle_stats.py` reads each run's `stdout.txt`/logs via `runs.csv`); record the cost at N = 10 and N = 20.
+- [ ] Merge `seeded-battles` into `headless-rl` and push when the user agrees; mods pin by hash, so pushing changes
+      nothing for them until they bump it.
 
-### Phase 5: RL bridge
+### Phase 5: RL (decision 2026-11-23: approaches A and B; OpenPW first, unless the user decides otherwise)
 
-- [ ] Merge the rest of `yxc20089/OpenRA@9b271c1` (RL bridge, gRPC, `Launch.Bots`, `Launch.MultiSession`). Resolve
-      `SpriteLoader.cs`, `ScreenShaker.cs`, and the `.sln` → `.slnx` change.
-- [ ] Decide where the RL code lives. Their layout (`OpenRA.Mods.Common`) keeps future merges easy; a separate
-      `OpenRA.Mods.RL` assembly keeps gRPC out of the mods' packages. Measure the package size difference first.
-- [ ] Validate on stock RA: their `pytest tests/`, `examples/scripted_bot.py`, `FastAdvance` speed.
-- [ ] Python side: fork `yxc20089/OpenRA-RL` and point its `OpenRA` submodule at our branch (open question 1).
-- [ ] Mod support:
-  - `rl-bot.yaml` per mod;
-  - trait interfaces `IRLObservationContributor` / `IRLActionHandler` for mod-specific state and actions (PW berries
-    and population, WBC heroes, SYW spells);
-  - a utility command `--rl-game-data` that exports a mod's actors, costs, prerequisites and weapons as JSON,
-    replacing the hand-written `game_data.py`.
-- [ ] Windows `launch-rl.cmd`.
+Approaches: **A** LLM agents playing through tools (OpenRA-RL's existing focus), later fine-tuned on their own games;
+**B** small neural networks trained with PPO on focused tasks (mini-games). Full-game deep RL (C) is a later goal.
+OpenRA-RL's Python side targets A: structured observations and unit commands, a shaped scalar reward, optional
+`trl`/`transformers` for LLM fine-tuning; no Gymnasium spaces, tensors or action masks.
+
+5a. Engine bridge (shared by A and B)
+- [ ] Merge the rest of `yxc20089/OpenRA@9b271c1` (RL bridge, gRPC, `Launch.Bots`, `Launch.MultiSession`) onto
+      `headless-rl`. Conflicts: `SpriteLoader.cs`, `ScreenShaker.cs`, `.sln` → `.slnx`.
+- [ ] Where the RL code lives: their layout (`OpenRA.Mods.Common`) keeps merges easy; a separate `OpenRA.Mods.RL`
+      keeps gRPC / ASP.NET Core out of the mods' release packages. **Must not change the mods' release builds**:
+      measure the package difference before deciding.
+- [ ] **Step mode**: the world advances exactly N ticks per agent request and then waits (synchronous environment).
+- [ ] **Fast reset**: restart a map inside the running process in well under a second (OpenPW start-up is ~7 s);
+      start from their `RLSessionManager` (shared `ModData`).
+- [ ] Validate on stock RA: their `pytest tests/`, `examples/scripted_bot.py`, `FastAdvance` speed. Windows
+      `launch-rl.cmd`.
+
+5b. Each mod's own mechanics
+- [ ] Trait interfaces `IRLObservationContributor` / `IRLActionHandler`; a generic `extra` field in the proto.
+- [ ] Utility command `--rl-game-data`: actors, costs, prerequisites, weapons as JSON (replaces `game_data.py`).
+- [ ] OpenPW first: berries, population, levels, spells.
+
+5c. Neural interface (B only)
+- [ ] Gymnasium wrapper: spatial layers at reduced resolution (terrain, fog, ownership, type, health), scalar
+      features, factored actions (type, units, target, item) with legality masks from engine queries.
+
+5d. Tasks, rewards, opponents
+- [ ] Mini-game maps (like the test maps): e.g. win a 10-vs-10 fight; gather 2,000 berries fastest.
+- [ ] Rewards per mod and task; opponents: the mod's AI at each difficulty, self-play later (two agent slots).
+
+5e. Training and evaluation
+- [ ] PPO with an existing library (CleanRL or Stable-Baselines3); checkpoints, TensorBoard.
+- [ ] Evaluation: win rate against each AI difficulty over N seeded games (Phase 4's runner); episodes as replays.
+- [ ] Python side: fork `yxc20089/OpenRA-RL`, `OpenRA` submodule on our branch (open question 1).
+
+Estimate to confirm: one headless OpenPW game ~630 ticks/s; acting every ~15 ticks with serialization overhead,
+perhaps 30–40 decisions/s per game, 300–400/s with 10 games; a mini-game needing 10–50 M decisions is a day or two.
 
 ### Phase 6 (optional): runs without converted content
 
